@@ -68,7 +68,7 @@ function versionCheck() {
      */
     const verCheck = async (package, ver, compared, reason) => {
       try {
-        if (package.dependencies && !!packageDiff.dependencies.after) {
+        if (packageDiff.dependencies && !!packageDiff.dependencies.after) {
           const lockedVer = String(compared).trim() + String(ver).trim();
           const newPackageVer = packageDiff.dependencies.after[package];
 
