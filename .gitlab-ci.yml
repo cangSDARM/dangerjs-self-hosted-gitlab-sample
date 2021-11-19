@@ -1,0 +1,17 @@
+stages:
+  - check
+  - build
+
+variables:
+  DANGER_GITLAB_API_TOKEN: 'BBBBBBBBBBBBBBB'
+  DANGER_GITLAB_HOST: 'https://gitlab.example.com'
+  DANGER_GITLAB_API_BASE_URL: 'https://gitlab.example.com/api/v4'
+
+danger-check:
+  image: node:14
+  stage: check
+  script:
+    - npm install -D lodash.includes lodash.find danger@10.5.4 --no-package-lock
+    - npm run danger
+  only:
+    - merge_requests
