@@ -1,12 +1,16 @@
-const { danger, fail, warn, schedule, markdown } = require("danger");
-const includes = require("lodash.includes");
-const find = require("lodash.find");
+const { danger, fail, warn } = require("danger");
 
 const commitFiles = [
   ...danger.git.created_files,
   ...danger.git.deleted_files,
   ...danger.git.modified_files,
 ];
+
+const RegExps = {
+  lockfile: /(.*)package-lock\.json/i,
+  packageJson: /(.*)package\.json/i,
+  alphaBeta: /alpha|beta/i,
+};
 
 /** Compare whether the corresponding *same-level* dirs under the repo have been modified at the same time
  * @param {String} rootDir Corresponds to the root path of the directory at the same level,
@@ -32,64 +36,84 @@ const dirChangedInSameMR = (rootDir, ranges) => {
   return [];
 };
 
+const formatMessages = (summary = "", mdContent = []) => {
+  return `
+<details><summary>${summary}</summary>
+
+${mdContent.join("\r\n")}
+</details>`;
+};
+
 function lockfileCheck() {
-  const hasPackageChanges = includes(danger.git.modified_files, "package.json");
-  const hasYarnLockfileChanges = includes(commitFiles, "yarn.lock");
-  const hasNpmLockfileChanges = includes(commitFiles, "package-lock.json");
-  if (hasYarnLockfileChanges || hasNpmLockfileChanges) {
-    if (!hasPackageChanges) {
-      fail(
-        "There are lockfile changes with no corresponding package.json changes"
+  for (let commitFile of commitFiles) {
+    const matched = commitFile.match(RegExps.lockfile);
+    if (matched) {
+      const hasPackageChanges = !!commitFiles.some(
+        (modified) => modified === `${matched[1]}package.json`
       );
+      if (!hasPackageChanges) {
+        fail(
+          `There are \`${commitFile}\` changes with no corresponding package.json changes`
+        );
+      }
     }
   }
 }
 
-function changelogCheck() {
-  const hasChangeLogChanges =
-    danger.git.modified_files.includes("CHANGELOG.md");
-  if (!hasChangeLogChanges) {
-    warn("Please add a changelog for your changes");
+function requireModifyCheck(config = ["CHANGELOG.md", "README.md"]) {
+  const modified = danger.git.modified_files;
+  const failedReasons = [];
+  for (let cfg of config) {
+    if (!modified.includes(cfg)) {
+      failedReasons.push(`- ${cfg}`);
+    }
   }
+  if (failedReasons.length > 0) {
+    warn(
+      formatMessages(
+        "There are files that must be modified but this MR does not include",
+        failedReasons
+      )
+    );
+  }
+  return true;
 }
 
 function versionCheck() {
-  schedule(async () => {
-    const packageDiff = await danger.git.JSONDiffForFile("package.json");
-    if (!packageDiff.dependencies) return;
-
-    /**
-     * Ensure that the version of a specific package will not be changed
-     * @see https://danger.systems/js/tutorials/dependencies.html
-     * @param {String} package package name
-     * @param {String} ver version
-     * @param {String} compared optional. like: `^10.5.1`, the compared will be `^`
-     * @param {String} reason Why is it locked?
-     */
-    const verCheck = async (package, ver, compared, reason) => {
-      try {
-        if (packageDiff.dependencies && !!packageDiff.dependencies.after) {
-          const lockedVer = String(compared).trim() + String(ver).trim();
-          const newPackageVer = packageDiff.dependencies.after[package];
-
-          if (!!newPackageVer) {
-            if (String(newPackageVer).trim() !== lockedVer) {
-              fail(`Do not update package(${package}), due to: ${reason}`);
+  const noBeta = true;
+  const locked = [
+    {
+      name: "danger",
+      reason: "https://github.com/danger/danger-js/issues/1106",
+      version: "10.6.0",
+    },
+  ];
+  for (let commitFile of commitFiles) {
+    if (commitFile.match(RegExps.packageJson)) {
+      danger.git.JSONDiffForFile(commitFile).then((packageDiff) => {
+        const dpd = Object.assign(
+          packageDiff.dependencies,
+          packageDiff.devDependencies
+        );
+        Object.entries(dpd.after).forEach(([pck, newVer]) => {
+          const lockedPck = locked.find((value) => value.name === pck);
+          const trimmedVer = String(newVer).trim();
+          if (lockedPck && !!newVer) {
+            const lockedVer = lockedPck.version;
+            if (trimmedVer !== lockedVer) {
+              fail(
+                `Do not upgrade \`${lockedPck.name}\`, due to: ${lockedPck.reason}`
+              );
             }
           }
-        }
-      } catch (e) {
-        fail(`version check failed! ${e}`);
-      }
-    };
-
-    await verCheck(
-      "danger",
-      "10.5.4",
-      "",
-      "this issue: https://github.com/danger/danger-js/issues/1106"
-    );
-  });
+          if (noBeta)
+            if (trimmedVer.match(RegExps.alphaBeta)) {
+              fail(`Do not contain beta version of \`${pck}\``);
+            }
+        });
+      });
+    }
+  }
 }
 
 function mrInfoCheck() {
@@ -114,21 +138,27 @@ function rangeCheck() {
       "Group4",
     ]);
     if (modified.length > 0) {
-      markdown(
-        `## WARN!
+      warn(`
 ### This MR modified files belonging to other groups!
 
-<details><summary>Modified ranges</summary>
-
-${modified.map((item) => "- `" + item + "`").join("\n")}
-</details>`
-      );
+${formatMessages("Modified ranges", modified)}`);
     }
   }
 }
 
+function branchCheck() {
+  if (
+    ["master", "main", "develop", "dev", "qa"].indexOf(
+      danger.gitlab.mr.target_branch
+    ) < 0
+  ) {
+    process.exit(0);
+  }
+}
+
+branchCheck();
 mrInfoCheck();
 rangeCheck();
-changelogCheck();
+requireModifyCheck();
 lockfileCheck();
 versionCheck();

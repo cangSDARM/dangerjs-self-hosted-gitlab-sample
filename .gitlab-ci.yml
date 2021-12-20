@@ -1,6 +1,5 @@
 stages:
   - check
-  - build
 
 variables:
   DANGER_GITLAB_API_TOKEN: 'BBBBBBBBBBBBBBB'
@@ -30,7 +29,7 @@ danger-check:
     # disable exit when error occurred
     - set +e
     - hash danger 2>/dev/null && echo "use cache" || yarn global add danger@10.6.0 --skip-integrity-check --no-progress --cache-folder .yarn --global-folder .yarn-cache
-    enable exit
+    # enable exit
     - set -e
     - echo "run ci command..."
     - danger ci --failOnErrors -v
